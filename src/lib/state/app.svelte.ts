@@ -1,0 +1,220 @@
+import type { MatrixRoom, MatrixMessage } from "$lib/matrix/api";
+import { listen } from "@tauri-apps/api/event";
+import { setMode } from "mode-watcher";
+
+export class AppState {
+	// Matrix account state
+	accounts: string[] = $state([]);
+	activeAccountId: string | null = $state(null);
+	
+	// Derived logged in state
+	get isLoggedIn() {
+		return this.accounts.length > 0;
+	}
+
+	// Used to force showing the login modal when adding a new account
+	showLoginModal: boolean = $state(false);
+	showSecurityModal: boolean = $state(false);
+
+	// Active main view tab (e.g., "dms", "spaces", "settings")
+	activeTab: string = $state("dms");
+
+	// Active chat/room ID in the current tab
+	activeRoomId: string | null = $state(null);
+
+	// i18n support
+	currentLanguage: string = $state("de");
+	textDirection: 'ltr' | 'rtl' = $state("ltr");
+
+	// Real data stores (keyed by accountId)
+	roomsByAccount: Record<string, MatrixRoom[]> = $state({});
+	messagesByAccountRoom: Record<string, Record<string, MatrixMessage[]>> = $state({});
+
+	// Mapping of accountId -> homeserver url to easily restore
+	savedAccounts: Array<{ accountId: string, homeserver: string }> = $state([]);
+	
+	deviceTheme: "system" | "light" | "dark" = $state("dark");
+
+	constructor() {
+		if (typeof window !== "undefined") {
+			this.setupListeners();
+			this.loadPersistedAccounts();
+		}
+	}
+
+	async loadPersistedAccounts() {
+		try {
+			const stored = localStorage.getItem("omnimatrix_accounts");
+			if (stored) {
+				const accounts = JSON.parse(stored);
+				this.savedAccounts = accounts;
+				
+				// Attempt to restore each session
+				for (const acc of accounts) {
+					try {
+						const { invoke } = await import("@tauri-apps/api/core");
+						const restored = await invoke('restore_session', { accountId: acc.accountId, homeserver: acc.homeserver });
+						if (restored) {
+							this.accounts.push(acc.accountId);
+							if (!this.activeAccountId) {
+								this.activeAccountId = acc.accountId;
+							}
+							const { syncMatrix } = await import("$lib/matrix/api");
+							syncMatrix(acc.accountId);
+						}
+					} catch (e) {
+						console.error(`Failed to restore session for ${acc.accountId}`, e);
+					}
+				}
+			}
+		} catch (e) {
+			console.error("Error loading persisted accounts", e);
+		}
+	}
+
+	persistAccounts() {
+		if (typeof window !== "undefined") {
+			localStorage.setItem("omnimatrix_accounts", JSON.stringify(this.savedAccounts));
+		}
+	}
+
+	async setupListeners() {
+		await listen("matrix-initial-rooms", (event) => {
+			const payload = event.payload as { account_id: string, rooms: MatrixRoom[] };
+			const { account_id, rooms } = payload;
+			if (!this.roomsByAccount[account_id]) {
+				this.roomsByAccount[account_id] = [];
+			}
+			// Only add rooms that don't exist
+			for (const r of rooms) {
+				const exists = this.roomsByAccount[account_id].find(existing => existing.id === r.id);
+				if (!exists) {
+					this.roomsByAccount[account_id].push(r);
+				}
+			}
+		});
+
+		await listen("matrix-new-message", (event) => {
+			const payload = event.payload as any;
+			const { account_id, room_id, sender, body } = payload;
+
+			if (!this.messagesByAccountRoom[account_id]) {
+				this.messagesByAccountRoom[account_id] = {};
+			}
+
+			if (!this.messagesByAccountRoom[account_id][room_id]) {
+				this.messagesByAccountRoom[account_id][room_id] = [];
+			}
+			
+			const newMessage: MatrixMessage = {
+				id: Date.now().toString() + Math.random(),
+				sender: sender,
+				text: body,
+				isMine: sender === account_id,
+				time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+			};
+
+			this.messagesByAccountRoom[account_id][room_id] = [...this.messagesByAccountRoom[account_id][room_id], newMessage];
+
+			// Update or add room
+			if (!this.roomsByAccount[account_id]) {
+				this.roomsByAccount[account_id] = [];
+			}
+			let roomIndex = this.roomsByAccount[account_id].findIndex(r => r.id === room_id);
+			if (roomIndex === -1) {
+				this.roomsByAccount[account_id] = [...this.roomsByAccount[account_id], {
+					id: room_id,
+					name: room_id, // Placeholder
+					avatar: sender.charAt(1).toUpperCase() || '?', // Simple avatar
+					lastMessage: body,
+					unread: (this.activeAccountId === account_id && this.activeRoomId === room_id) ? 0 : 1,
+					isDm: true,
+					isEncrypted: false
+				}];
+			} else {
+				this.roomsByAccount[account_id][roomIndex].lastMessage = body;
+				if (this.activeAccountId !== account_id || this.activeRoomId !== room_id) {
+					this.roomsByAccount[account_id][roomIndex].unread += 1;
+				}
+			}
+		});
+	}
+
+	setActiveTab(tabId: string) {
+		this.activeTab = tabId;
+		// Reset active room when switching tabs for now
+		this.activeRoomId = null;
+	}
+
+	setActiveAccount(accountId: string) {
+		this.activeAccountId = accountId;
+		this.activeRoomId = null; // Clear room selection on account switch
+	}
+
+	setActiveRoom(roomId: string) {
+		this.activeRoomId = roomId;
+		if (this.activeAccountId && this.roomsByAccount[this.activeAccountId]) {
+			const roomIndex = this.roomsByAccount[this.activeAccountId].findIndex(r => r.id === roomId);
+			if (roomIndex !== -1) {
+				this.roomsByAccount[this.activeAccountId][roomIndex].unread = 0;
+			}
+		}
+	}
+
+	setLanguage(lang: string, dir: 'ltr' | 'rtl') {
+		this.currentLanguage = lang;
+		this.textDirection = dir;
+		if (typeof document !== 'undefined') {
+			document.documentElement.lang = lang;
+			document.documentElement.dir = dir;
+		}
+	}
+
+	async addAccount(accountId: string, homeserver: string) {
+		if (!this.accounts.includes(accountId)) {
+			this.accounts.push(accountId);
+			this.savedAccounts.push({ accountId, homeserver });
+			this.persistAccounts();
+		}
+		this.activeAccountId = accountId;
+		this.showLoginModal = false;
+		
+		try {
+			const { syncMatrix } = await import("$lib/matrix/api");
+			syncMatrix(accountId);
+			
+			// Automatically prompt for security backup when adding a new account
+			this.showSecurityModal = true;
+		} catch (e) {
+			console.error("Failed to start sync for new account", e);
+		}
+	}
+
+	async removeAccount(accountId: string) {
+		this.accounts = this.accounts.filter(a => a !== accountId);
+		this.savedAccounts = this.savedAccounts.filter(a => a.accountId !== accountId);
+		this.persistAccounts();
+		
+		if (this.activeAccountId === accountId) {
+			this.activeAccountId = this.accounts.length > 0 ? this.accounts[0] : null;
+		}
+		
+		if (!this.activeAccountId) {
+			this.showLoginModal = true;
+		}
+
+		try {
+			const { logoutMatrix } = await import("$lib/matrix/api");
+			await logoutMatrix(accountId);
+		} catch (e) {
+			console.error("Failed to log out cleanly", e);
+		}
+	}
+	setTheme(theme: "system" | "light" | "dark") {
+		this.deviceTheme = theme;
+		setMode(theme);
+	}
+}
+
+// Global singleton instance
+export const appState = new AppState();

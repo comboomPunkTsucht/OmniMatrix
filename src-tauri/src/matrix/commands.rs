@@ -1,0 +1,464 @@
+use tauri::{AppHandle, Manager, State};
+use tauri_plugin_os;
+use std::path::PathBuf;
+use matrix_sdk::Client;
+use crate::matrix::client_manager::ClientManager;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MatrixError {
+    message: String,
+}
+
+impl From<matrix_sdk::Error> for MatrixError {
+    fn from(err: matrix_sdk::Error) -> Self {
+        Self {
+            message: err.to_string(),
+        }
+    }
+}
+
+impl From<url::ParseError> for MatrixError {
+    fn from(err: url::ParseError) -> Self {
+        Self {
+            message: err.to_string(),
+        }
+    }
+}
+
+impl From<matrix_sdk::ClientBuildError> for MatrixError {
+    fn from(err: matrix_sdk::ClientBuildError) -> Self {
+        Self {
+            message: err.to_string(),
+        }
+    }
+}
+
+impl From<matrix_sdk::ruma::IdParseError> for MatrixError {
+    fn from(err: matrix_sdk::ruma::IdParseError) -> Self {
+        Self {
+            message: err.to_string(),
+        }
+    }
+}
+
+fn get_storage_path(app: &AppHandle, account_id: &str) -> Result<PathBuf, MatrixError> {
+    let mut path = app.path().app_local_data_dir().map_err(|e| MatrixError { message: e.to_string() })?;
+    path.push("matrix_sessions");
+    path.push(account_id);
+    Ok(path)
+}
+
+fn get_or_create_passphrase(account_id: &str) -> Result<String, MatrixError> {
+    use keyring::Entry;
+    use rand::RngExt;
+
+    let entry = Entry::new("OmniMatrix", account_id).map_err(|e| MatrixError {
+        message: format!("Keyring error: {}", e),
+    })?;
+
+    match entry.get_password() {
+        Ok(password) => Ok(password),
+        Err(keyring::Error::NoEntry) => {
+            let password: String = rand::rng()
+                .sample_iter(&rand::distr::Alphanumeric)
+                .take(32)
+                .map(char::from)
+                .collect();
+            entry.set_password(&password).map_err(|e| MatrixError {
+                message: format!("Failed to set keyring password: {}", e),
+            })?;
+            Ok(password)
+        }
+        Err(e) => Err(MatrixError {
+            message: format!("Keyring error: {}", e),
+        }),
+    }
+}
+
+#[tauri::command]
+pub async fn login(
+    app: AppHandle,
+    state: State<'_, ClientManager>,
+    account_id: String,
+    homeserver: String,
+    username: String,
+    password: String,
+) -> Result<(), MatrixError> {
+    let path = get_storage_path(&app, &account_id)?;
+    
+    // If the user logs in anew, they get a new Device ID from the homeserver.
+    // The crypto store is strictly tied to a single Device ID.
+    // We MUST clear the old store to prevent "account in store doesn't match" errors.
+    if path.exists() {
+        let _ = std::fs::remove_dir_all(&path);
+    }
+    std::fs::create_dir_all(&path).map_err(|e| MatrixError { message: e.to_string() })?;
+
+    let passphrase = get_or_create_passphrase(&account_id)?;
+
+    // Create a new client
+    let client = Client::builder()
+        .homeserver_url(homeserver)
+        .sqlite_store(&path, Some(&passphrase))
+        .build()
+        .await
+        .map_err(|e| MatrixError { message: e.to_string() })?;
+
+    client.matrix_auth().login_username(&username, &password).send().await.map_err(|e| MatrixError { message: e.to_string() })?;
+
+    // Save to manager
+    state.add_client(account_id, client).await;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn register(
+    app: AppHandle,
+    state: State<'_, ClientManager>,
+    account_id: String,
+    homeserver: String,
+    username: String,
+    password: String,
+) -> Result<(), MatrixError> {
+    let path = get_storage_path(&app, &account_id)?;
+    
+    // Clear old store for the same reason
+    if path.exists() {
+        let _ = std::fs::remove_dir_all(&path);
+    }
+    std::fs::create_dir_all(&path).map_err(|e| MatrixError { message: e.to_string() })?;
+
+    let passphrase = get_or_create_passphrase(&account_id)?;
+
+    let client = Client::builder()
+        .homeserver_url(homeserver)
+        .sqlite_store(&path, Some(&passphrase))
+        .build()
+        .await
+        .map_err(|e| MatrixError { message: e.to_string() })?;
+
+    let mut request = matrix_sdk::ruma::api::client::account::register::v3::Request::new();
+    request.username = Some(username.clone());
+    request.password = Some(password.clone());
+
+    client.matrix_auth().register(request).await.map_err(|e| MatrixError { message: e.to_string() })?;
+
+    // Registration usually doesn't automatically log in depending on homeserver configuration.
+    // We try to login after registration to be sure we have a session.
+    if !client.matrix_auth().logged_in() {
+        let _ = client.matrix_auth().login_username(&username, &password).send().await;
+    }
+
+    state.add_client(account_id, client).await;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn login_sso(
+    app: AppHandle,
+    state: State<'_, ClientManager>,
+    account_id: String,
+    homeserver: String,
+    login_token: String,
+) -> Result<(), MatrixError> {
+    let path = get_storage_path(&app, &account_id)?;
+    
+    // Clear old store
+    if path.exists() {
+        let _ = std::fs::remove_dir_all(&path);
+    }
+    std::fs::create_dir_all(&path).map_err(|e| MatrixError { message: e.to_string() })?;
+
+    let passphrase = get_or_create_passphrase(&account_id)?;
+
+    let client = Client::builder()
+        .homeserver_url(homeserver)
+        .sqlite_store(&path, Some(&passphrase))
+        .build()
+        .await
+        .map_err(|e| MatrixError { message: e.to_string() })?;
+
+    client.matrix_auth().login_token(&login_token).send().await.map_err(|e| MatrixError { message: e.to_string() })?;
+
+    state.add_client(account_id, client).await;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn restore_session(
+    app: AppHandle,
+    state: State<'_, ClientManager>,
+    account_id: String,
+    homeserver: String,
+) -> Result<bool, MatrixError> {
+    let path = get_storage_path(&app, &account_id)?;
+
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let passphrase = get_or_create_passphrase(&account_id)?;
+
+    let client = Client::builder()
+        .homeserver_url(homeserver)
+        .sqlite_store(&path, Some(&passphrase))
+        .build()
+        .await?;
+
+    if client.matrix_auth().logged_in() {
+        state.add_client(account_id, client).await;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+use tauri::Emitter;
+use matrix_sdk::ruma::events::room::message::SyncRoomMessageEvent;
+
+#[derive(Clone, Serialize)]
+pub struct NewMessagePayload {
+    pub account_id: String,
+    pub room_id: String,
+    pub sender: String,
+    pub body: String,
+}
+
+#[derive(Clone, Serialize)]
+pub struct MatrixRoomPayload {
+    pub id: String,
+    pub name: String,
+    pub avatar: String,
+    #[serde(rename = "lastMessage")]
+    pub last_message: String,
+    pub unread: u32,
+    #[serde(rename = "isDm")]
+    pub is_dm: bool,
+    #[serde(rename = "isEncrypted")]
+    pub is_encrypted: bool,
+}
+
+#[derive(Clone, Serialize)]
+pub struct InitialRoomsPayload {
+    pub account_id: String,
+    pub rooms: Vec<MatrixRoomPayload>,
+}
+
+#[tauri::command]
+pub async fn logout(
+    app: AppHandle,
+    state: State<'_, ClientManager>,
+    account_id: String,
+) -> Result<(), MatrixError> {
+    // 1. Get client and log out from the server
+    if let Some(client) = state.get_client(&account_id).await {
+        let _ = client.matrix_auth().logout().await;
+        state.remove_client(&account_id).await;
+    }
+
+    // 2. Clear local storage
+    let path = get_storage_path(&app, &account_id)?;
+    if path.exists() {
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn sync(app: AppHandle, state: State<'_, ClientManager>, account_id: String) -> Result<(), MatrixError> {
+    let client = state.get_client(&account_id).await.ok_or_else(|| MatrixError {
+        message: "Account not found or not logged in".to_string(),
+    })?;
+
+    // Perform initial sync to fetch rooms
+    let sync_settings = matrix_sdk::config::SyncSettings::default();
+    let initial_response = client.sync_once(sync_settings.clone()).await?;
+
+    // Fetch existing rooms
+    let mut initial_rooms = Vec::new();
+    for room in client.rooms() {
+        let name = room.name().unwrap_or_else(|| "Unknown Room".to_string());
+        let is_dm = room.is_direct().await.unwrap_or(false);
+        // matrix-sdk 0.16.1 uses latest_encryption_state
+        let is_encrypted = room.latest_encryption_state().await.map(|s| s.is_encrypted()).unwrap_or(false);
+        initial_rooms.push(MatrixRoomPayload {
+            id: room.room_id().to_string(),
+            name,
+            avatar: "?".to_string(),
+            last_message: "".to_string(),
+            unread: 0,
+            is_dm,
+            is_encrypted,
+        });
+    }
+
+    let _ = app.emit("matrix-initial-rooms", InitialRoomsPayload {
+        account_id: account_id.clone(),
+        rooms: initial_rooms,
+    });
+
+    let app_handle = app.clone();
+    let account_id_clone = account_id.clone();
+    client.add_event_handler(move |ev: SyncRoomMessageEvent, room: matrix_sdk::Room| {
+        let app_handle = app_handle.clone();
+        let account_id_clone = account_id_clone.clone();
+        async move {
+            let body = match ev.as_original() {
+                Some(ev) => match &ev.content.msgtype {
+                    matrix_sdk::ruma::events::room::message::MessageType::Text(t) => t.body.clone(),
+                    _ => "A non-text message".to_string(),
+                },
+                None => return, // redacted
+            };
+
+            let payload = NewMessagePayload {
+                account_id: account_id_clone,
+                room_id: room.room_id().to_string(),
+                sender: ev.sender().to_string(),
+                body,
+            };
+
+            let _ = app_handle.emit("matrix-new-message", payload);
+        }
+    });
+
+    // Start sync in background
+    let next_batch = initial_response.next_batch;
+    tokio::spawn(async move {
+        let mut sync_settings = matrix_sdk::config::SyncSettings::default();
+        sync_settings = sync_settings.token(next_batch);
+        
+        if let Err(e) = client.sync(sync_settings).await {
+            eprintln!("Sync error: {}", e);
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn send_message(
+    state: State<'_, ClientManager>,
+    account_id: String,
+    room_id: String,
+    content: String,
+) -> Result<(), MatrixError> {
+    let client = state.get_client(&account_id).await.ok_or_else(|| MatrixError {
+        message: "Account not found or not logged in".to_string(),
+    })?;
+
+    let room_id = matrix_sdk::ruma::RoomId::parse(&room_id)?;
+    let room = client.get_room(&room_id).ok_or_else(|| MatrixError {
+        message: "Room not found".to_string(),
+    })?;
+
+    let content = matrix_sdk::ruma::events::room::message::RoomMessageEventContent::text_plain(content);
+    
+    room.send(content).await?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn send_media(
+    state: State<'_, ClientManager>,
+    account_id: String,
+    room_id: String,
+    file_bytes: Vec<u8>,
+    mime_type: String,
+    file_name: String,
+) -> Result<(), MatrixError> {
+    let client = state.get_client(&account_id).await.ok_or_else(|| MatrixError {
+        message: "Account not found or not logged in".to_string(),
+    })?;
+    let room_id = matrix_sdk::ruma::RoomId::parse(&room_id).map_err(|e| MatrixError { message: e.to_string() })?;
+    let room = client.get_room(&room_id).ok_or_else(|| MatrixError {
+        message: "Room not found".to_string(),
+    })?;
+
+    let mime: mime::Mime = mime_type.parse().map_err(|e| MatrixError { message: format!("Invalid mime: {}", e) })?;
+    
+    room.send_attachment(&file_name, &mime, file_bytes, matrix_sdk::attachment::AttachmentConfig::new())
+        .await
+        .map_err(|e| MatrixError { message: e.to_string() })?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn recover_backup(
+    state: State<'_, ClientManager>,
+    account_id: String,
+    passphrase: String,
+) -> Result<(), MatrixError> {
+    let client = state.get_client(&account_id).await.ok_or_else(|| MatrixError {
+        message: "Account not found or not logged in".to_string(),
+    })?;
+    
+    client.encryption().recovery().recover(&passphrase).await.map_err(|e| MatrixError { message: e.to_string() })?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn send_typing_notice(
+    state: State<'_, ClientManager>,
+    account_id: String,
+    room_id: String,
+    is_typing: bool,
+) -> Result<(), MatrixError> {
+    let client = state.get_client(&account_id).await.ok_or_else(|| MatrixError {
+        message: "Account not found or not logged in".to_string(),
+    })?;
+    let room_id = matrix_sdk::ruma::RoomId::parse(&room_id).map_err(|e| MatrixError { message: e.to_string() })?;
+    let room = client.get_room(&room_id).ok_or_else(|| MatrixError {
+        message: "Room not found".to_string(),
+    })?;
+    
+    room.typing_notice(is_typing).await.map_err(|e| MatrixError { message: e.to_string() })?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn send_read_receipt(
+    state: State<'_, ClientManager>,
+    account_id: String,
+    room_id: String,
+    event_id: String,
+) -> Result<(), MatrixError> {
+    let client = state.get_client(&account_id).await.ok_or_else(|| MatrixError {
+        message: "Account not found or not logged in".to_string(),
+    })?;
+    let room_id = matrix_sdk::ruma::RoomId::parse(&room_id).map_err(|e| MatrixError { message: e.to_string() })?;
+    let event_id = matrix_sdk::ruma::EventId::parse(&event_id).map_err(|e| MatrixError { message: e.to_string() })?;
+    let room = client.get_room(&room_id).ok_or_else(|| MatrixError {
+        message: "Room not found".to_string(),
+    })?;
+    
+    let receipt_type = matrix_sdk::ruma::api::client::receipt::create_receipt::v3::ReceiptType::Read;
+    let thread = matrix_sdk::ruma::events::receipt::ReceiptThread::Unthreaded;
+    room.send_single_receipt(receipt_type, thread, event_id).await.map_err(|e| MatrixError { message: e.to_string() })?;
+    
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn send_call_invite(
+    state: State<'_, ClientManager>,
+    account_id: String,
+    room_id: String,
+    call_type: String,
+) -> Result<(), MatrixError> {
+    let _client = state.get_client(&account_id).await.ok_or_else(|| MatrixError {
+        message: "Account not found or not logged in".to_string(),
+    })?;
+
+    // Stub for sending a call invite
+    println!("Sending {} call invite to room {} via account {}", call_type, room_id, account_id);
+
+    Ok(())
+}
