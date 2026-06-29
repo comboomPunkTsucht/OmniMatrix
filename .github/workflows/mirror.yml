@@ -1,0 +1,53 @@
+name: Mirror to GitLab
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - '**'
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Wichtig: Gesamten Verlauf laden für den Hash-Vergleich
+
+      - name: Setup Git
+        run: |
+          git config --global user.name "${{ secrets.GITLAB_USERNAME }}"
+          git config --global user.email "${{ secrets.GITLAB_EMAIL }}"
+
+      - name: Check for changes and push to GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          GITLAB_USERNAME: ${{ secrets.GITLAB_USERNAME }}
+          # Passe die Domain an, falls du self-hosted bist:
+          GITLAB_REPO: "gitlab.com/comboompunktsucht/OmniMatrix.git"
+        run: |
+          git remote add gitlab https://${GITLAB_USERNAME}:${GITLAB_TOKEN}@${GITLAB_REPO}
+
+          # Prüfen, ob Push ein Branch oder ein Tag war
+          if [[ "$GITHUB_REF" == refs/heads/* ]]; then
+            BRANCH_NAME=${GITHUB_REF#refs/heads/}
+            
+            git fetch gitlab $BRANCH_NAME || echo "Branch existiert auf GitLab noch nicht."
+
+            LOCAL_COMMIT=$(git rev-parse HEAD)
+            REMOTE_COMMIT=$(git ls-remote gitlab refs/heads/$BRANCH_NAME | awk '{print $1}')
+
+            if [ "$LOCAL_COMMIT" != "$REMOTE_COMMIT" ]; then
+              echo "Änderungen im Branch $BRANCH_NAME gefunden. Pushe zu GitLab..."
+              git push gitlab HEAD:refs/heads/$BRANCH_NAME
+            else
+              echo "Commit-Hashes sind identisch. Kein Push nötig."
+            fi
+            
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG_NAME=${GITHUB_REF#refs/tags/}
+            echo "Tag $TAG_NAME erkannt. Pushe zu GitLab..."
+            git push gitlab refs/tags/$TAG_NAME
+          fi

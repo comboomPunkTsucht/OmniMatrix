@@ -1,0 +1,38 @@
+# .gitlab-ci.yml
+image:
+  name: alpine/git
+  entrypoint: [""]
+
+stages:
+  - mirror
+
+mirror-to-github:
+  stage: mirror
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+  script:
+    - git config --global user.name "${GITHUB_USERNAME}"
+    - git config --global user.email "${GITHUB_EMAIL}"
+
+    # GitLab remote (HTTPS) hinzufügen
+    - git remote add github https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/comboompunktsucht/OmniMatrix.git
+    
+    - |
+      if [ -n "$CI_COMMIT_BRANCH" ]; then
+        # Branch-Logik: Hole Remote-Infos und vergleiche
+        git fetch github $CI_COMMIT_BRANCH || echo "Branch existiert auf GitHub noch nicht."
+        
+        LOCAL_COMMIT=$(git rev-parse HEAD)
+        REMOTE_COMMIT=$(git ls-remote github refs/heads/$CI_COMMIT_BRANCH | awk '{print $1}')
+        
+        if [ "$LOCAL_COMMIT" != "$REMOTE_COMMIT" ]; then
+          echo "Änderungen im Branch $CI_COMMIT_BRANCH gefunden. Pushe zu GitHub..."
+          git push github HEAD:refs/heads/$CI_COMMIT_BRANCH
+        else
+          echo "Commit-Hashes sind identisch. Kein Push nötig."
+        fi
+      elif [ -n "$CI_COMMIT_TAG" ]; then
+        # Tag-Logik: Tags direkt pushen
+        echo "Tag $CI_COMMIT_TAG erkannt. Pushe zu GitHub..."
+        git push github $CI_COMMIT_TAG
+      fi
