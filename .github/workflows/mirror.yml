@@ -26,7 +26,7 @@ jobs:
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
           GITLAB_USERNAME: ${{ secrets.GITLAB_USERNAME }}
           # Passe die Domain an, falls du self-hosted bist:
-          GITLAB_REPO: "gitlab.com/comboompunktsucht/OmniMatrix.git"
+          GITLAB_REPO: "gitlab.com/comboomPunkTsucht/OmniMatrix.git"
         run: |
           git remote add gitlab https://${GITLAB_USERNAME}:${GITLAB_TOKEN}@${GITLAB_REPO}
 
