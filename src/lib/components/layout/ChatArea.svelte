@@ -146,6 +146,7 @@
 		}
 	});
 
+	import MatrixAvatar from "$lib/components/MatrixAvatar.svelte";
 </script>
 
 <div 
@@ -158,8 +159,8 @@
 		<!-- Chat Header -->
 		<div class="h-16 px-6 border-b border-border flex items-center justify-between bg-card shadow-sm z-10 shrink-0">
 			<div class="flex items-center gap-4">
-				<div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/20 text-primary font-semibold">
-					{room.avatar}
+				<div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full">
+					<MatrixAvatar accountId={activeAccountId!} mxcUri={room.avatar} name={room.name} class="w-10 h-10 rounded-full" />
 				</div>
 				<div>
 					<h2 class="font-semibold text-foreground text-lg">{room.name}</h2>
@@ -190,8 +191,8 @@
 				<div class="flex flex-col {msg.isMine ? 'items-end' : 'items-start'} max-w-full">
 					<div class="flex items-end gap-2 max-w-[70%] {msg.isMine ? 'flex-row-reverse' : 'flex-row'}">
 						{#if !msg.isMine}
-							<div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/20 text-primary font-semibold text-xs mb-1">
-								{room.avatar}
+							<div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full mb-1">
+								<MatrixAvatar accountId={activeAccountId!} name={msg.sender} class="w-8 h-8 rounded-full text-xs" />
 							</div>
 						{/if}
 						<div class="flex flex-col {msg.isMine ? 'items-end' : 'items-start'}">

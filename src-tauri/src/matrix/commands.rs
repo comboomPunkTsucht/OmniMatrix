@@ -232,7 +232,7 @@ pub struct NewMessagePayload {
 pub struct MatrixRoomPayload {
     pub id: String,
     pub name: String,
-    pub avatar: String,
+    pub avatar: Option<String>,
     #[serde(rename = "lastMessage")]
     pub last_message: String,
     pub unread: u32,
@@ -240,6 +240,10 @@ pub struct MatrixRoomPayload {
     pub is_dm: bool,
     #[serde(rename = "isEncrypted")]
     pub is_encrypted: bool,
+    #[serde(rename = "isSpace")]
+    pub is_space: bool,
+    #[serde(rename = "parentSpaces")]
+    pub parent_spaces: Vec<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -268,7 +272,7 @@ pub async fn logout(
 
     Ok(())
 }
-
+use futures_util::StreamExt;
 #[tauri::command]
 pub async fn sync(app: AppHandle, state: State<'_, ClientManager>, account_id: String) -> Result<(), MatrixError> {
     let client = state.get_client(&account_id).await.ok_or_else(|| MatrixError {
@@ -282,18 +286,46 @@ pub async fn sync(app: AppHandle, state: State<'_, ClientManager>, account_id: S
     // Fetch existing rooms
     let mut initial_rooms = Vec::new();
     for room in client.rooms() {
-        let name = room.name().unwrap_or_else(|| "Unknown Room".to_string());
+        let display_name = room.display_name().await.unwrap_or(matrix_sdk::RoomDisplayName::Empty);
+        let name = display_name.to_string();
         let is_dm = room.is_direct().await.unwrap_or(false);
         // matrix-sdk 0.16.1 uses latest_encryption_state
         let is_encrypted = room.latest_encryption_state().await.map(|s| s.is_encrypted()).unwrap_or(false);
+        let is_space = room.is_space();
+        
+        let avatar = match room.avatar_url() {
+            Some(url) => Some(url.to_string()),
+            None => {
+                if is_dm {
+                    room.heroes().first().and_then(|h| h.avatar_url.as_ref().map(|url| url.to_string()))
+                } else {
+                    None
+                }
+            }
+        };
+        
+        let mut parent_spaces = Vec::new();
+        if let Ok(mut stream) = room.parent_spaces().await {
+            while let Some(Ok(parent)) = stream.next().await {
+                match parent {
+                    matrix_sdk::room::ParentSpace::Reciprocal(r) => parent_spaces.push(r.room_id().to_string()),
+                    matrix_sdk::room::ParentSpace::WithPowerlevel(r) => parent_spaces.push(r.room_id().to_string()),
+                    matrix_sdk::room::ParentSpace::Illegitimate(r) => parent_spaces.push(r.room_id().to_string()),
+                    matrix_sdk::room::ParentSpace::Unverifiable(id) => parent_spaces.push(id.to_string()),
+                }
+            }
+        }
+
         initial_rooms.push(MatrixRoomPayload {
             id: room.room_id().to_string(),
             name,
-            avatar: "?".to_string(),
+            avatar,
             last_message: "".to_string(),
             unread: 0,
             is_dm,
             is_encrypted,
+            is_space,
+            parent_spaces,
         });
     }
 
@@ -461,4 +493,57 @@ pub async fn send_call_invite(
     println!("Sending {} call invite to room {} via account {}", call_type, room_id, account_id);
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_media(
+    state: State<'_, ClientManager>,
+    account_id: String,
+    mxc_uri: String,
+) -> Result<Vec<u8>, MatrixError> {
+    let client = state.get_client(&account_id).await.ok_or_else(|| MatrixError {
+        message: "Account not found or not logged in".to_string(),
+    })?;
+
+    let uri = <&matrix_sdk::ruma::MxcUri>::try_from(mxc_uri.as_str()).map_err(|e| MatrixError {
+        message: format!("Invalid MXC URI: {}", e),
+    })?.to_owned();
+
+    let request = matrix_sdk::media::MediaRequestParameters {
+        source: matrix_sdk::ruma::events::room::MediaSource::Plain(uri),
+        format: matrix_sdk::media::MediaFormat::File,
+    };
+
+    let bytes = client.media().get_media_content(&request, true).await.map_err(|e| MatrixError {
+        message: format!("Failed to get media: {}", e),
+    })?;
+
+    Ok(bytes)
+}
+
+#[derive(Clone, Serialize)]
+pub struct UserProfilePayload {
+    #[serde(rename = "displayName")]
+    pub display_name: Option<String>,
+    #[serde(rename = "avatarUrl")]
+    pub avatar_url: Option<String>,
+}
+
+#[tauri::command]
+pub async fn get_profile(
+    state: State<'_, ClientManager>,
+    account_id: String,
+) -> Result<UserProfilePayload, MatrixError> {
+    let client = state.get_client(&account_id).await.ok_or_else(|| MatrixError {
+        message: "Account not found or not logged in".to_string(),
+    })?;
+
+    let account = client.account();
+    let display_name = account.get_display_name().await.unwrap_or(None);
+    let avatar_url = account.get_avatar_url().await.unwrap_or(None).map(|uri| uri.to_string());
+
+    Ok(UserProfilePayload {
+        display_name,
+        avatar_url,
+    })
 }

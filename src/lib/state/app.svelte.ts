@@ -1,4 +1,4 @@
-import type { MatrixRoom, MatrixMessage } from "$lib/matrix/api";
+import type { MatrixRoom, MatrixMessage, UserProfile } from "$lib/matrix/api";
 import { listen } from "@tauri-apps/api/event";
 import { setMode } from "mode-watcher";
 
@@ -6,6 +6,7 @@ export class AppState {
 	// Matrix account state
 	accounts: string[] = $state([]);
 	activeAccountId: string | null = $state(null);
+	accountProfiles: Record<string, UserProfile> = $state({});
 	
 	// Derived logged in state
 	get isLoggedIn() {
@@ -18,9 +19,19 @@ export class AppState {
 
 	// Active main view tab (e.g., "dms", "spaces", "settings")
 	activeTab: string = $state("dms");
+	
+	// Room list filtering view
+	activeView: "all" | "dms" | "space" = $state("all");
+	activeSpaceId: string | null = $state(null);
 
 	// Active chat/room ID in the current tab
 	activeRoomId: string | null = $state(null);
+
+	setActiveView(view: "all" | "dms" | "space", spaceId: string | null = null) {
+		this.activeView = view;
+		this.activeSpaceId = spaceId;
+		this.activeRoomId = null;
+	}
 
 	// i18n support
 	currentLanguage: string = $state("de");
@@ -59,8 +70,12 @@ export class AppState {
 							if (!this.activeAccountId) {
 								this.activeAccountId = acc.accountId;
 							}
-							const { syncMatrix } = await import("$lib/matrix/api");
+							const { syncMatrix, getProfile } = await import("$lib/matrix/api");
 							syncMatrix(acc.accountId);
+							
+							getProfile(acc.accountId).then(profile => {
+								this.accountProfiles[acc.accountId] = profile;
+							}).catch(console.error);
 						}
 					} catch (e) {
 						console.error(`Failed to restore session for ${acc.accountId}`, e);
@@ -129,7 +144,9 @@ export class AppState {
 					lastMessage: body,
 					unread: (this.activeAccountId === account_id && this.activeRoomId === room_id) ? 0 : 1,
 					isDm: true,
-					isEncrypted: false
+					isEncrypted: false,
+					isSpace: false,
+					parentSpaces: []
 				}];
 			} else {
 				this.roomsByAccount[account_id][roomIndex].lastMessage = body;
@@ -180,9 +197,13 @@ export class AppState {
 		this.showLoginModal = false;
 		
 		try {
-			const { syncMatrix } = await import("$lib/matrix/api");
+			const { syncMatrix, getProfile } = await import("$lib/matrix/api");
 			syncMatrix(accountId);
 			
+			getProfile(accountId).then(profile => {
+				this.accountProfiles[accountId] = profile;
+			}).catch(console.error);
+
 			// Automatically prompt for security backup when adding a new account
 			this.showSecurityModal = true;
 		} catch (e) {

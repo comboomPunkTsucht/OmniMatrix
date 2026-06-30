@@ -6,6 +6,7 @@ version = 4
 name = "OmniMatrix"
 version = "26.1.0"
 dependencies = [
+ "futures-util",
  "keyring",
  "matrix-sdk",
  "matrix-sdk-sqlite",

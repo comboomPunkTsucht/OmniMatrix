@@ -85,6 +85,30 @@ export async function sendMessage(accountId: string, roomId: string, content: st
     }
 }
 
+export async function getMedia(accountId: string, mxcUri: string): Promise<string> {
+    try {
+        const bytes = await invoke<number[]>('get_media', { accountId, mxcUri });
+        const uint8Array = new Uint8Array(bytes);
+        const blob = new Blob([uint8Array]);
+        return URL.createObjectURL(blob);
+    } catch (e) {
+        throw new Error((e as MatrixError).message || String(e));
+    }
+}
+
+export interface UserProfile {
+    displayName?: string;
+    avatarUrl?: string;
+}
+
+export async function getProfile(accountId: string): Promise<UserProfile> {
+    try {
+        return await invoke<UserProfile>('get_profile', { accountId });
+    } catch (e) {
+        throw new Error((e as MatrixError).message || String(e));
+    }
+}
+
 export interface MatrixMessage {
     id: string;
     sender: string;
@@ -96,9 +120,11 @@ export interface MatrixMessage {
 export interface MatrixRoom {
     id: string;
     name: string;
-    avatar: string;
+    avatar?: string;
     lastMessage: string;
     unread: number;
     isDm: boolean;
     isEncrypted: boolean;
+    isSpace: boolean;
+    parentSpaces: string[];
 }

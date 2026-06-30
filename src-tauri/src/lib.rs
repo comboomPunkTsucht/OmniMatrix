@@ -27,6 +27,8 @@ pub fn run() {
             matrix::commands::send_call_invite,
             matrix::commands::recover_backup,
             matrix::commands::logout,
+            matrix::commands::get_media,
+            matrix::commands::get_profile,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
