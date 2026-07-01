@@ -4,8 +4,8 @@
   "version": "26.1.0",
   "identifier": "dev.comboom.sucht.OmniMatrix",
   "build": {
-    "beforeDevCommand": "pnpm dev",
-    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "pnpm dev --host",
+    "devUrl": "http://10.3.1.8:1420",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../build"
   },
@@ -17,7 +17,10 @@
       {
         "title": "OmniMatrix",
         "width": 800,
-        "height": 600
+        "height": 600,
+        "transparent": true,
+        "allowLinkPreview": true,
+        "browserExtensionsEnabled": true
       }
     ],
     "security": {
@@ -33,7 +36,8 @@
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
-      "icons/icon.ico"
+      "icons/icon.ico",
+      "icons/AppIcon.icns"
     ]
   },
   "mainBinaryName": "OmniMatrix"

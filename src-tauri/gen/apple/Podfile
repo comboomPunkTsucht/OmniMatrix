@@ -1,12 +1,12 @@
 # Uncomment the next line to define a global platform for your project
 
-target 'omnimatrix_iOS' do
-platform :ios, '14.0'
+target 'OmniMatrix_iOS' do
+platform :ios, '26.0'
   # Pods for omnimatrix_iOS
 end
 
 target 'omnimatrix_macOS' do
-platform :osx, '11.0'
+platform :osx, '26.0'
   # Pods for omnimatrix_macOS
 end
 

@@ -94,6 +94,12 @@ export class AppState {
 	}
 
 	async setupListeners() {
+		const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+		if (!isTauri) {
+			console.warn("[Web Mode] Tauri events are disabled. Matrix sync will not work natively.");
+			return;
+		}
+
 		await listen("matrix-initial-rooms", (event) => {
 			const payload = event.payload as { account_id: string, rooms: MatrixRoom[] };
 			const { account_id, rooms } = payload;

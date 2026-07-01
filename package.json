@@ -16,8 +16,10 @@
   "dependencies": {
     "@tailwindcss/vite": "^4.3.1",
     "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-opener": "^2.5.4",
     "@tauri-apps/plugin-os": "^2.3.2",
+    "@tauri-store/svelte": "^3.2.0",
     "runed": "^0.37.1",
     "tailwindcss": "^4.3.1"
   },

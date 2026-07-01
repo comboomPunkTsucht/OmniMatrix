@@ -9,9 +9,13 @@ fn greet(name: &str) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_svelte::init())
+        .plugin(tauri_plugin_notification::init());
+
+    builder
         .manage(matrix::client_manager::ClientManager::new())
         .invoke_handler(tauri::generate_handler![
             greet,

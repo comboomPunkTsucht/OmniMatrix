@@ -18,16 +18,23 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+tauri-plugin-notification = "2.0.0"
+tauri-plugin-svelte = "3"
 tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-os = "2"
-matrix-sdk = { version = "0.16.1", features = ["e2e-encryption"] }
+matrix-sdk = { version = "0.18.0", features = ["e2e-encryption", "qrcode", "sqlite", "markdown", "bundled-sqlite", "js", "indexeddb", "socks", "sso-login"] }
 tokio = { version = "1.52.3", features = ["full"] }
-matrix-sdk-sqlite = "0.16.1"
+matrix-sdk-sqlite = "0.18.0"
 url = "2.5.8"
 keyring = "4.1.2"
+apple-native-keyring-store = { version = "1.0.0", features = ["protected"] }
 rand = "0.10.1"
 mime = "0.3.17"
 futures-util = "0.3.32"
+
+[patch.crates-io]
+swift-rs = { path = "patches/swift-rs" }
+

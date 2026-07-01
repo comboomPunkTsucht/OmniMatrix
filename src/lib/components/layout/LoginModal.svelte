@@ -99,12 +99,12 @@
 			{#if loginMode === "password"}
 				<div>
 					<Label for="username" class="block text-sm font-medium text-foreground mb-1">Username</Label>
-					<Input id="username" type="username" bind:value={username} required class="w-full" placeholder="e.g. alice" />
+					<Input id="username" type="username" bind:value={username} autocomplete="username" required class="w-full" placeholder="e.g. alice" />
 				</div>
 
 				<div>
 					<Label for="password" class="block text-sm font-medium text-foreground mb-1">Password</Label>
-					<Input id="password" type="password" bind:value={password} required class="w-full" placeholder="********" />
+					<Input id="password" type="password" bind:value={password} autocomplete="current-password" required class="w-full" placeholder="********" />
 				</div>
 			{:else}
 				<div class="bg-muted p-4 rounded-lg text-sm mb-4">
@@ -114,7 +114,7 @@
 				</div>
 				<div>
 					<Label for="ssoToken" class="block text-sm font-medium text-foreground mb-1">SSO Login Token</Label>
-					<Input id="ssoToken" type="text" bind:value={ssoToken} required class="w-full" placeholder="Paste token here..." />
+					<Input id="ssoToken" type="password" bind:value={ssoToken} autocomplete="current-password" required class="w-full" placeholder="Paste token here..." />
 				</div>
 			{/if}
 

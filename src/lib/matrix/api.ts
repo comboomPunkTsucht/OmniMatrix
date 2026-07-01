@@ -1,4 +1,13 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+
+async function invoke<T>(cmd: string, args: any = {}): Promise<T> {
+    const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+    if (!isTauri) {
+        console.warn(`[Web Mode] invoke('${cmd}') mocked. Tauri is not available in the browser.`);
+        return {} as T;
+    }
+    return await tauriInvoke<T>(cmd, args);
+}
 
 export interface MatrixError {
     message: string;

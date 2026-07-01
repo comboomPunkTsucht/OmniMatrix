@@ -218,7 +218,7 @@ pub async fn restore_session(
 }
 
 use tauri::Emitter;
-use matrix_sdk::ruma::events::room::message::SyncRoomMessageEvent;
+use matrix_sdk::ruma::events::room::message::OriginalSyncRoomMessageEvent;
 
 #[derive(Clone, Serialize)]
 pub struct NewMessagePayload {
@@ -279,6 +279,28 @@ pub async fn sync(app: AppHandle, state: State<'_, ClientManager>, account_id: S
         message: "Account not found or not logged in".to_string(),
     })?;
 
+    let app_handle = app.clone();
+    let account_id_clone = account_id.clone();
+    client.add_event_handler(move |ev: matrix_sdk::ruma::events::room::message::OriginalSyncRoomMessageEvent, room: matrix_sdk::Room| {
+        let app_handle = app_handle.clone();
+        let account_id_clone = account_id_clone.clone();
+        async move {
+            let body = match &ev.content.msgtype {
+                matrix_sdk::ruma::events::room::message::MessageType::Text(t) => t.body.clone(),
+                _ => "A non-text message".to_string(),
+            };
+
+            let payload = NewMessagePayload {
+                account_id: account_id_clone,
+                room_id: room.room_id().to_string(),
+                sender: ev.sender.to_string(),
+                body,
+            };
+
+            let _ = app_handle.emit("matrix-new-message", payload);
+        }
+    });
+
     // Perform initial sync to fetch rooms
     let sync_settings = matrix_sdk::config::SyncSettings::default();
     let initial_response = client.sync_once(sync_settings.clone()).await?;
@@ -289,7 +311,7 @@ pub async fn sync(app: AppHandle, state: State<'_, ClientManager>, account_id: S
         let display_name = room.display_name().await.unwrap_or(matrix_sdk::RoomDisplayName::Empty);
         let name = display_name.to_string();
         let is_dm = room.is_direct().await.unwrap_or(false);
-        // matrix-sdk 0.16.1 uses latest_encryption_state
+        // matrix-sdk 0.18 uses latest_encryption_state
         let is_encrypted = room.latest_encryption_state().await.map(|s| s.is_encrypted()).unwrap_or(false);
         let is_space = room.is_space();
         
@@ -332,31 +354,6 @@ pub async fn sync(app: AppHandle, state: State<'_, ClientManager>, account_id: S
     let _ = app.emit("matrix-initial-rooms", InitialRoomsPayload {
         account_id: account_id.clone(),
         rooms: initial_rooms,
-    });
-
-    let app_handle = app.clone();
-    let account_id_clone = account_id.clone();
-    client.add_event_handler(move |ev: SyncRoomMessageEvent, room: matrix_sdk::Room| {
-        let app_handle = app_handle.clone();
-        let account_id_clone = account_id_clone.clone();
-        async move {
-            let body = match ev.as_original() {
-                Some(ev) => match &ev.content.msgtype {
-                    matrix_sdk::ruma::events::room::message::MessageType::Text(t) => t.body.clone(),
-                    _ => "A non-text message".to_string(),
-                },
-                None => return, // redacted
-            };
-
-            let payload = NewMessagePayload {
-                account_id: account_id_clone,
-                room_id: room.room_id().to_string(),
-                sender: ev.sender().to_string(),
-                body,
-            };
-
-            let _ = app_handle.emit("matrix-new-message", payload);
-        }
     });
 
     // Start sync in background
@@ -545,5 +542,128 @@ pub async fn get_profile(
     Ok(UserProfilePayload {
         display_name,
         avatar_url,
+    })
+}
+
+#[derive(Clone, Serialize)]
+pub struct TimelineMessagePayload {
+    pub id: String,
+    pub sender: String,
+    pub body: String,
+    pub is_mine: bool,
+    pub timestamp: u64,
+    pub msg_type: String,
+}
+
+#[derive(Clone, Serialize)]
+pub struct RoomHistoryPayload {
+    pub messages: Vec<TimelineMessagePayload>,
+    pub end_token: Option<String>,
+    pub has_more: bool,
+}
+
+fn extract_event_content(event: &matrix_sdk::deserialized_responses::TimelineEvent, own_user_id: Option<String>) -> Option<TimelineMessagePayload> {
+    use matrix_sdk::ruma::events::AnySyncTimelineEvent;
+    use matrix_sdk::ruma::events::room::message::MessageType as RumaMessageType;
+    
+    let raw = event.raw();
+    let any_event: AnySyncTimelineEvent = raw.deserialize().ok()?;
+    
+    match any_event {
+        AnySyncTimelineEvent::MessageLike(msg) => {
+            match msg {
+                matrix_sdk::ruma::events::AnySyncMessageLikeEvent::RoomMessage(room_msg) => {
+                    let sender = room_msg.sender.to_string();
+                    let event_id = room_msg.event_id.to_string();
+                    let is_mine = Some(&sender) == own_user_id.as_ref();
+                    
+                    // Extract content based on message type
+                    let (body, msg_type) = match &room_msg.content.msgtype {
+                        RumaMessageType::Text(text) => (text.body.clone(), "text".to_string()),
+                        RumaMessageType::Image(img) => {
+                            let caption = if img.body.is_empty() { "[Image]" } else { &img.body };
+                            (caption.to_string(), "image".to_string())
+                        },
+                        RumaMessageType::Video(vid) => {
+                            let caption = if vid.body.is_empty() { "[Video]" } else { &vid.body };
+                            (caption.to_string(), "video".to_string())
+                        },
+                        RumaMessageType::File(file) => {
+                            let caption = if file.filename.is_empty() { "[File]" } else { &file.filename };
+                            (caption.to_string(), "file".to_string())
+                        },
+                        RumaMessageType::Audio(audio) => {
+                            let caption = if audio.body.is_empty() { "[Audio]" } else { &audio.body };
+                            (caption.to_string(), "audio".to_string())
+                        },
+                        _ => ("[Unknown message type]".to_string(), "unknown".to_string()),
+                    };
+                    
+                    let timestamp = event.timestamp()
+                        .map(|ts| ts.0.as_millis() as u64)
+                        .unwrap_or(0);
+                    
+                    Some(TimelineMessagePayload {
+                        id: event_id,
+                        sender,
+                        body,
+                        is_mine,
+                        timestamp,
+                        msg_type,
+                    })
+                },
+                _ => None,
+            }
+        },
+        _ => None,
+    }
+}
+
+#[tauri::command]
+pub async fn fetch_room_messages(
+    state: State<'_, ClientManager>,
+    account_id: String,
+    room_id: String,
+    from: Option<String>,
+    limit: u16,
+) -> Result<RoomHistoryPayload, MatrixError> {
+    let client = state.get_client(&account_id).await.ok_or_else(|| MatrixError {
+        message: &quot;Account not found or not logged in&quot;.to_string(),
+    })?;
+    
+    let room_id_parsed = matrix_sdk::ruma::RoomId::parse(&room_id).map_err(|e| MatrixError {
+        message: format!(&quot;Invalid room ID: {}&quot;, e),
+    })?;
+    
+    let room = client.get_room(&room_id_parsed).ok_or_else(|| MatrixError {
+        message: &quot;Room not found&quot;.to_string(),
+    })?;
+    
+    let mut opts = matrix_sdk::room::MessagesOptions::backward();
+    opts.limit = (limit as u64).into();
+    if let Some(token) = from {
+        opts.from = Some(token);
+    }
+    
+    let messages = room.messages(opts).await.map_err(|e| MatrixError {
+        message: format!(&quot;Failed to fetch messages: {}&quot;, e),
+    })?;
+    
+    let own_user_id = client.user_id().map(|u| u.to_string());
+    let mut result_messages = Vec::new();
+    
+    for event in messages.chunk {
+        if let Some(msg) = extract_event_content(&event, own_user_id.clone()) {
+            result_messages.push(msg);
+        }
+    }
+    
+    let end_token = messages.end;
+    let has_more = end_token.is_some();
+    
+    Ok(RoomHistoryPayload {
+        messages: result_messages,
+        end_token,
+        has_more,
     })
 }

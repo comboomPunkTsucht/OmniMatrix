@@ -4,6 +4,8 @@
   "description": "Capability for the main window",
   "windows": ["main"],
   "permissions": [
+    "notification:default",
+    "svelte:default",
     "core:default",
     "opener:default",
     "os:default"

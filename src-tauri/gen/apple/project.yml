@@ -1,8 +1,8 @@
-name: omnimatrix
+name: OmniMatrix
 options:
   bundleIdPrefix: dev.comboom.sucht.OmniMatrix
   deploymentTarget:
-    iOS: 14.0
+    iOS: 26.0
 fileGroups: [../../src]
 configs:
   debug: debug
@@ -10,8 +10,11 @@ configs:
 settingGroups:
   app:
     base:
-      PRODUCT_NAME: omnimatrix
+      PRODUCT_NAME: OmniMatrix
       PRODUCT_BUNDLE_IDENTIFIER: dev.comboom.sucht.OmniMatrix
+      # WICHTIG: Ersetzen Sie dies durch Ihre Apple Team ID (z. B. "ABCDE12345"), 
+      # ansonsten schlägt das Kompilieren für echte iPhones fehl!
+      DEVELOPMENT_TEAM: "3KUZ76Z8W3"
 targetTemplates:
   app:
     type: application
@@ -24,20 +27,21 @@ targetTemplates:
     settings:
       groups: [app]
 targets:
-  omnimatrix_iOS:
+  OmniMatrix_iOS:
     type: application
     platform: iOS
     sources:
       - path: Sources
+      - path: Appicon.icon
       - path: Assets.xcassets
       - path: Externals
-      - path: omnimatrix_iOS
+      - path: OmniMatrix_iOS
       - path: assets
         buildPhase: resources
         type: folder
       - path: LaunchScreen.storyboard
     info:
-      path: omnimatrix_iOS/Info.plist
+      path: OmniMatrix_iOS/Info.plist
       properties:
         LSRequiresIPhoneOS: true
         UILaunchStoryboardName: LaunchScreen
@@ -54,7 +58,7 @@ targets:
         CFBundleShortVersionString: 0.1.0
         CFBundleVersion: "0.1.0"
     entitlements:
-      path: omnimatrix_iOS/omnimatrix_iOS.entitlements
+      path: OmniMatrix_iOS/OmniMatrix_iOS.entitlements
     scheme:
       environmentVariables:
         RUST_BACKTRACE: full
@@ -79,6 +83,7 @@ targets:
       - sdk: Security.framework
       - sdk: UIKit.framework
       - sdk: WebKit.framework
+      - sdk: libsqlite3.tbd
     preBuildScripts:
       - script: pnpm tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths "${FRAMEWORK_SEARCH_PATHS:?}" --header-search-paths "${HEADER_SEARCH_PATHS:?}" --gcc-preprocessor-definitions "${GCC_PREPROCESSOR_DEFINITIONS:-}" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}
         name: Build Rust Code
