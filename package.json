@@ -2,6 +2,7 @@
   "name": "omnimatrix",
   "version": "0.1.0",
   "description": "",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vp dev",
@@ -12,7 +13,6 @@
     "tauri": "tauri",
     "prepare": "vp config"
   },
-  "license": "MIT",
   "dependencies": {
     "@tailwindcss/vite": "^4.3.1",
     "@tauri-apps/api": "^2.11.1",

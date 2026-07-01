@@ -139,12 +139,32 @@
 		}
 	}
 
-	// Watch for room change
+	// Watch for room change - load history when switching rooms
 	$effect(() => {
-		if (activeRoomId) {
+		if (activeAccountId && activeRoomId) {
+			// Load history for this room
+			appState.loadRoomHistory(activeAccountId, activeRoomId, true);
 			scrollToBottom();
 		}
 	});
+
+	// Derived pagination state for current room
+	let hasMoreMessages = $derived(
+		activeAccountId && activeRoomId 
+			? (appState.paginationState[activeAccountId]?.[activeRoomId]?.hasMore ?? true)
+			: false
+	);
+	let isLoadingHistory = $derived(
+		activeAccountId && activeRoomId 
+			? (appState.paginationState[activeAccountId]?.[activeRoomId]?.loading ?? false)
+			: false
+	);
+
+	async function loadMoreMessages() {
+		if (activeAccountId && activeRoomId && !isLoadingHistory) {
+			await appState.loadMoreMessages(activeAccountId, activeRoomId);
+		}
+	}
 
 	import MatrixAvatar from "$lib/components/MatrixAvatar.svelte";
 </script>
@@ -183,6 +203,21 @@
 
 		<!-- Messages Area -->
 		<div class="flex-1 overflow-y-auto p-6 space-y-6" bind:this={messagesContainer}>
+			<!-- Load More Button -->
+			{#if hasMoreMessages}
+				<div class="text-center py-4">
+					<Button 
+						onclick={loadMoreMessages} 
+						loading={isLoadingHistory}
+						variant="ghost" 
+						size="sm"
+						class="text-muted-foreground hover:text-foreground"
+					>
+						{isLoadingHistory ? "Loading..." : "Load more messages"}
+					</Button>
+				</div>
+			{/if}
+
 			<div class="text-center text-xs text-muted-foreground mb-8">
 				Today
 			</div>

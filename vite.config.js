@@ -3,7 +3,6 @@ import { sveltekit } from "@sveltejs/kit/vite";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 
-
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
@@ -35,7 +34,7 @@ export default defineConfig(async () => ({
   resolve: {
     alias: {
       "@src": path.resolve(__dirname, "./src"),
-      "$lib": path.resolve(__dirname, "./src/lib"),
+      $lib: path.resolve(__dirname, "./src/lib"),
       "@src-tauri": path.resolve(__dirname, "./src-tauri"),
     },
   },

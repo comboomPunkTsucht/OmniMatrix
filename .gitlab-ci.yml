@@ -16,7 +16,7 @@ mirror-to-github:
 
     # GitLab remote (HTTPS) hinzufügen
     - git remote add github https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/comboomPunkTsucht/OmniMatrix.git
-    
+
     - |
       if [ -n "$CI_COMMIT_BRANCH" ]; then
         # Branch-Logik: Hole Remote-Infos und vergleiche

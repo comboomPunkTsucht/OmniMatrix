@@ -1,5 +1,4 @@
 use tauri::{AppHandle, Manager, State};
-use tauri_plugin_os;
 use std::path::PathBuf;
 use matrix_sdk::Client;
 use crate::matrix::client_manager::ClientManager;
@@ -218,7 +217,6 @@ pub async fn restore_session(
 }
 
 use tauri::Emitter;
-use matrix_sdk::ruma::events::room::message::OriginalSyncRoomMessageEvent;
 
 #[derive(Clone, Serialize)]
 pub struct NewMessagePayload {
@@ -546,6 +544,7 @@ pub async fn get_profile(
 }
 
 #[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TimelineMessagePayload {
     pub id: String,
     pub sender: String,
@@ -556,6 +555,7 @@ pub struct TimelineMessagePayload {
 }
 
 #[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RoomHistoryPayload {
     pub messages: Vec<TimelineMessagePayload>,
     pub end_token: Option<String>,
@@ -573,44 +573,50 @@ fn extract_event_content(event: &matrix_sdk::deserialized_responses::TimelineEve
         AnySyncTimelineEvent::MessageLike(msg) => {
             match msg {
                 matrix_sdk::ruma::events::AnySyncMessageLikeEvent::RoomMessage(room_msg) => {
-                    let sender = room_msg.sender.to_string();
-                    let event_id = room_msg.event_id.to_string();
-                    let is_mine = Some(&sender) == own_user_id.as_ref();
-                    
-                    // Extract content based on message type
-                    let (body, msg_type) = match &room_msg.content.msgtype {
-                        RumaMessageType::Text(text) => (text.body.clone(), "text".to_string()),
-                        RumaMessageType::Image(img) => {
-                            let caption = if img.body.is_empty() { "[Image]" } else { &img.body };
-                            (caption.to_string(), "image".to_string())
+                    // Handle Original and Redacted events separately
+                    match room_msg {
+                        matrix_sdk::ruma::events::SyncMessageLikeEvent::Original(orig) => {
+                            let sender = orig.sender.to_string();
+                            let event_id = orig.event_id.to_string();
+                            let is_mine = Some(&sender) == own_user_id.as_ref();
+                            
+                            // Extract content based on message type
+                            let (body, msg_type) = match &orig.content.msgtype {
+                                RumaMessageType::Text(text) => (text.body.clone(), "text".to_string()),
+                                RumaMessageType::Image(img) => {
+                                    let caption = if img.body.is_empty() { "[Image]" } else { &img.body };
+                                    (caption.to_string(), "image".to_string())
+                                },
+                                RumaMessageType::Video(vid) => {
+                                    let caption = if vid.body.is_empty() { "[Video]" } else { &vid.body };
+                                    (caption.to_string(), "video".to_string())
+                                },
+                                RumaMessageType::File(file) => {
+                                    let caption = if file.filename.as_deref().unwrap_or("").is_empty() { "[File]" } else { file.filename.as_deref().unwrap_or("") };
+                                    (caption.to_string(), "file".to_string())
+                                },
+                                RumaMessageType::Audio(audio) => {
+                                    let caption = if audio.body.is_empty() { "[Audio]" } else { &audio.body };
+                                    (caption.to_string(), "audio".to_string())
+                                },
+                                _ => ("[Unknown message type]".to_string(), "unknown".to_string()),
+                            };
+                            
+                            let timestamp = event.timestamp()
+                                .map(|ts| u64::from(ts.0))
+                                .unwrap_or(0);
+                            
+                            Some(TimelineMessagePayload {
+                                id: event_id,
+                                sender,
+                                body,
+                                is_mine,
+                                timestamp,
+                                msg_type,
+                            })
                         },
-                        RumaMessageType::Video(vid) => {
-                            let caption = if vid.body.is_empty() { "[Video]" } else { &vid.body };
-                            (caption.to_string(), "video".to_string())
-                        },
-                        RumaMessageType::File(file) => {
-                            let caption = if file.filename.is_empty() { "[File]" } else { &file.filename };
-                            (caption.to_string(), "file".to_string())
-                        },
-                        RumaMessageType::Audio(audio) => {
-                            let caption = if audio.body.is_empty() { "[Audio]" } else { &audio.body };
-                            (caption.to_string(), "audio".to_string())
-                        },
-                        _ => ("[Unknown message type]".to_string(), "unknown".to_string()),
-                    };
-                    
-                    let timestamp = event.timestamp()
-                        .map(|ts| ts.0.as_millis() as u64)
-                        .unwrap_or(0);
-                    
-                    Some(TimelineMessagePayload {
-                        id: event_id,
-                        sender,
-                        body,
-                        is_mine,
-                        timestamp,
-                        msg_type,
-                    })
+                        matrix_sdk::ruma::events::SyncMessageLikeEvent::Redacted(_) => None,
+                    }
                 },
                 _ => None,
             }
@@ -628,25 +634,25 @@ pub async fn fetch_room_messages(
     limit: u16,
 ) -> Result<RoomHistoryPayload, MatrixError> {
     let client = state.get_client(&account_id).await.ok_or_else(|| MatrixError {
-        message: &quot;Account not found or not logged in&quot;.to_string(),
+        message: "Account not found or not logged in".to_string(),
     })?;
     
     let room_id_parsed = matrix_sdk::ruma::RoomId::parse(&room_id).map_err(|e| MatrixError {
-        message: format!(&quot;Invalid room ID: {}&quot;, e),
+        message: format!("Invalid room ID: {}", e),
     })?;
     
     let room = client.get_room(&room_id_parsed).ok_or_else(|| MatrixError {
-        message: &quot;Room not found&quot;.to_string(),
+        message: "Room not found".to_string(),
     })?;
     
     let mut opts = matrix_sdk::room::MessagesOptions::backward();
-    opts.limit = (limit as u64).into();
+    opts.limit = (limit as u32).into();
     if let Some(token) = from {
         opts.from = Some(token);
     }
     
     let messages = room.messages(opts).await.map_err(|e| MatrixError {
-        message: format!(&quot;Failed to fetch messages: {}&quot;, e),
+        message: format!("Failed to fetch messages: {}", e),
     })?;
     
     let own_user_id = client.user_id().map(|u| u.to_string());
