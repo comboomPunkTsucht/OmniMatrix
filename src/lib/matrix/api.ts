@@ -188,6 +188,7 @@ export interface MatrixMessage {
   text: string;
   isMine: boolean;
   time: string;
+  timestamp?: number;
 }
 
 export interface MatrixRoom {

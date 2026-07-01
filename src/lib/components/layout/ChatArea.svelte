@@ -50,13 +50,15 @@
 				sendTypingNotice(activeAccountId, activeRoomId, false).catch(console.error);
 			}
 
-			// Optimistically add message
+		// Optimistically add message
+			const now = Date.now();
 			const newMessage = {
-				id: Date.now().toString(),
+				id: `opt-${now}`,
 				sender: activeAccountId,
 				text: text,
 				isMine: true,
-				time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+				time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+				timestamp: now,
 			};
 			if (!appState.messagesByAccountRoom[activeAccountId]) {
 				appState.messagesByAccountRoom[activeAccountId] = {};
@@ -144,7 +146,10 @@
 		if (activeAccountId && activeRoomId) {
 			// Load history for this room
 			appState.loadRoomHistory(activeAccountId, activeRoomId, true);
-			scrollToBottom();
+			// Delay scroll to avoid jitter during initial render, wait for DOM to settle
+			requestAnimationFrame(() => {
+				requestAnimationFrame(() => scrollToBottom());
+			});
 		}
 	});
 
@@ -222,7 +227,7 @@
 				Today
 			</div>
 
-			{#each messages as msg}
+			{#each messages as msg (msg.id)}
 				<div class="flex flex-col {msg.isMine ? 'items-end' : 'items-start'} max-w-full">
 					<div class="flex items-end gap-2 max-w-[70%] {msg.isMine ? 'flex-row-reverse' : 'flex-row'}">
 						{#if !msg.isMine}

@@ -45,6 +45,3 @@ rand = "0.10.1"
 mime = "0.3.17"
 futures-util = "0.3.32"
 
-[patch.crates-io]
-swift-rs = { path = "patches/swift-rs" }
-

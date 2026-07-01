@@ -46,10 +46,10 @@ export class AppState {
 
   deviceTheme: "system" | "light" | "dark" = $state("dark");
 
-  // Pagination state per room: accountId -> roomId -> { endToken, hasMore, loading }
+  // Pagination state per room: accountId -> roomId -> { endToken, hasMore, loading, loaded }
   paginationState: Record<
     string,
-    Record<string, { endToken: string | null; hasMore: boolean; loading: boolean }>
+    Record<string, { endToken: string | null; hasMore: boolean; loading: boolean; loaded: boolean }>
   > = $state({});
 
   constructor() {
@@ -61,19 +61,26 @@ export class AppState {
 
   // Load historical messages for a room
   async loadRoomHistory(accountId: string, roomId: string, initial: boolean = false) {
-    if (initial && this.messagesByAccountRoom[accountId]?.[roomId]?.length > 0) {
-      // Already loaded initially
-      return;
-    }
-
     if (!this.paginationState[accountId]) {
       this.paginationState[accountId] = {};
     }
     if (!this.paginationState[accountId][roomId]) {
-      this.paginationState[accountId][roomId] = { endToken: null, hasMore: true, loading: false };
+      this.paginationState[accountId][roomId] = {
+        endToken: null,
+        hasMore: true,
+        loading: false,
+        loaded: false,
+      };
     }
 
     const state = this.paginationState[accountId][roomId];
+
+    // If we've already loaded once and this is just an initial check, skip
+    if (initial && state.loaded) {
+      return;
+    }
+    state.loaded = true;
+
     if (state.loading || (!state.hasMore && !initial)) return;
 
     state.loading = true;
@@ -89,8 +96,7 @@ export class AppState {
         this.messagesByAccountRoom[accountId][roomId] = [];
       }
 
-      // Prepend older messages to the beginning
-      const existing = this.messagesByAccountRoom[accountId][roomId];
+      // Prepend older messages using in-place mutation to prevent UI jitter
       const newMessages = response.messages.map((msg) => ({
         id: msg.id,
         sender: msg.sender,
@@ -100,9 +106,11 @@ export class AppState {
           hour: "2-digit",
           minute: "2-digit",
         }),
+        timestamp: msg.timestamp,
       }));
 
-      this.messagesByAccountRoom[accountId][roomId] = [...newMessages, ...existing];
+      // Use unshift for in-place prepending (avoids full re-render and DOM jitter)
+      this.messagesByAccountRoom[accountId][roomId].unshift(...newMessages);
       state.endToken = response.endToken;
       state.hasMore = response.hasMore;
     } catch (e) {
@@ -196,18 +204,47 @@ export class AppState {
         this.messagesByAccountRoom[account_id][room_id] = [];
       }
 
-      const newMessage: MatrixMessage = {
-        id: Date.now().toString() + Math.random(),
-        sender: sender,
-        text: body,
-        isMine: sender === account_id,
-        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      };
+      const now = Date.now();
+      const roomMessages = this.messagesByAccountRoom[account_id][room_id];
 
-      this.messagesByAccountRoom[account_id][room_id] = [
-        ...this.messagesByAccountRoom[account_id][room_id],
-        newMessage,
-      ];
+      // Deduplication: Check for a recent optimistic message with same sender and text
+      const DEDUPLICATION_WINDOW_MS = 5000;
+      let existingIndex = -1;
+      for (let i = roomMessages.length - 1; i >= 0; i--) {
+        const msg = roomMessages[i];
+        if (
+          msg.sender === sender &&
+          msg.text === body &&
+          !msg.id?.startsWith("sync-") &&
+          (msg.timestamp ? now - msg.timestamp < DEDUPLICATION_WINDOW_MS : true)
+        ) {
+          existingIndex = i;
+          break;
+        }
+      }
+
+      if (existingIndex !== -1) {
+        // Replace the optimistic message with the real one, keeping the same ID for key stability
+        roomMessages[existingIndex] = {
+          ...roomMessages[existingIndex],
+          id: roomMessages[existingIndex].id,
+          sender,
+          text: body,
+          isMine: sender === account_id,
+          time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          timestamp: now,
+        };
+      } else {
+        const newMessage: MatrixMessage = {
+          id: `sync-${now}`,
+          sender,
+          text: body,
+          isMine: sender === account_id,
+          time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          timestamp: now,
+        };
+        roomMessages.push(newMessage);
+      }
 
       // Update or add room
       if (!this.roomsByAccount[account_id]) {
